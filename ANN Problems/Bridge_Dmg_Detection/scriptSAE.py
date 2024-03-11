@@ -1,4 +1,5 @@
 # %%
+print("Carregando Bibliotecas...")
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -14,10 +15,12 @@ from keras import regularizers
 import scipy
 import math
 from sklearn.model_selection import train_test_split
+print("Bibliotecas carregadas!")
 
 # %%
+print("Executando manipulação de dados...")
 dataTT = loadmat(f"Data04-08_TT_UltVag_Cut.mat")
-dataTF = loadmat(f"Data04-08_VG_UltVag_Cut.mat")
+dataTF = loadmat(f"Data04-08_TF_UltVag_Cut.mat")
 
 dataBaseline = dataTT['Baseline']
 dataCincoP = dataTT['CincoP']
@@ -39,6 +42,7 @@ dataDez = dataDez.drop(x_test_Dez.index)
 dataVinte = pd.DataFrame(dataVinte)
 x_test_Vinte = dataVinte.sample(200, random_state = 42)
 dataVinte = dataVinte.drop(x_test_Vinte.index)
+print("Manipulação de dados finalizada!")
 
 # %%
 def run_autoencoder(dataBaseline, x_test_Baseline):
@@ -61,8 +65,8 @@ def run_autoencoder(dataBaseline, x_test_Baseline):
     callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=20) 
 
     autoencoder.fit(dataBaseline, dataBaseline,
-                    epochs=100,
-                    batch_size=40,
+                    epochs=150,
+                    batch_size=30,
                     shuffle=True,
                     callbacks = [callback],
                     validation_data=(x_test_Baseline, x_test_Baseline),
@@ -99,6 +103,72 @@ def plotagem_reconstrução(df_analisado):
     plt.show()
 
 #plotagem_reconstrução(x_test_Dez)
+#Distância de Mahalanobis 
+print("Montando a plotagem da distância de Mahalanobis")
+def mae_Dano(dadoAnalisado, autoencoder, mae_Baseline, label):
+            mae_Medio = np.array([])
+
+            for i in range(dadoAnalisado.shape[0]):
+                y = np.array(dadoAnalisado.iloc[i])
+                y_predict = autoencoder.predict(dadoAnalisado.iloc[i].values.reshape(1, -1), verbose=0)
+                y_predict = y_predict[0]
+                mae_Atual = np.mean(np.abs((y_predict - y)))  # Calculando o mae atual e usando np.mean()
+                mae_Medio = np.append(mae_Medio, mae_Atual)
+                
+            mahalanobis = np.sqrt(((mae_Medio.mean() - mae_Baseline.mean()) ** 2) / (mae_Baseline.std()) ** 2)
+
+            return mahalanobis, mae_Baseline, mae_Medio
+
+n_iters = 10 #Variabilidade do processador
+
+def mahalanobis(n_iters, dadoAnalisado, label):
+
+    mahalanobis = []
+    mae_Baseline_list = []  # Inicializar como uma lista
+    mae_Medio_list = []  # Inicializar como uma lista
+    
+    for i in range(n_iters):
+        autoencoder = run_autoencoder(dataBaseline, x_test_Baseline)
+
+        mae_Baseline = []  
+        for i in range(dataBaseline.shape[0]):
+            y = np.array(dataBaseline.iloc[i])
+            y_predict = autoencoder.predict(dataBaseline.iloc[i].values.reshape(1, -1), verbose=0)
+            y_predict = y_predict[0]
+            mae_Atual = np.mean(np.abs((y_predict - y)))  
+            mae_Baseline.append(mae_Atual)
+
+        mae_Baseline_array = np.array(mae_Baseline)
+
+        dados_mahalanobis = mae_Dano(dadoAnalisado, autoencoder, mae_Baseline_array, label)
+
+        mahalanobis.append(dados_mahalanobis[0])
+        mae_Baseline_list.append(dados_mahalanobis[1].tolist())
+        mae_Medio_list.append(dados_mahalanobis[2].tolist())
+
+    return np.mean(mahalanobis), np.array(mae_Baseline_list).flatten(), np.array(mae_Medio_list).flatten()
+        
+
+# Chamar a função para cada cenário com a etiqueta apropriada
+mae_baseline = mahalanobis(n_iters, dataBaseline, 'mae Baseline')
+mae_Cinco = mahalanobis(n_iters, dataCincoP , 'mae Cinco')
+mae_Dez = mahalanobis(n_iters, dataDez, 'mae Dez')
+mae_Vinte = mahalanobis(n_iters, dataVinte, 'mae Vinte')
+
+fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+
+# Chamar a função para cada cenário com a etiqueta apropriada e plotar em um grid
+for i, (mae_data, label) in enumerate([(mae_baseline, 'MAE Baseline'), (mae_Cinco, 'MAE Cinco'), (mae_Dez, 'MAE Dez'), (mae_Vinte, 'MAE Vinte')]):
+    ax = axs[i // 2, i % 2]
+    x = np.arange(0, mae_data[2].__len__())
+    ax.scatter(x, mae_data[2], s=3)
+    ax.set_xlabel('Índice da Amostra')
+    ax.set_ylabel('Distância de Mahalanobis')
+    ax.set_title(f'{label}, Distância média de: {np.round(mae_data[0],3)}')
+    ax.grid(True)
+
+plt.tight_layout()
+plt.show()
 
 # %%
 def data_split(data, p=0.1):
@@ -117,9 +187,9 @@ Teste_Caso = ["x_test_Baseline_splitted", "x_test_Cinco_splitted", "x_test_Dez_s
 legenda = ['Baseline', 'DC1=5%', 'DC2=10%', 'DC3=20%'] 
 cor = ['forestgreen', 'orange', 'royalblue', 'firebrick', 'magenta']
 
-ntestes = 3 # Quantas variáveis de dano são adicionadas
+ntestes = 4 # Quantas variáveis de dano são adicionadas
 n_it = 40 #Numero de conjuntos
-n_vbatch = 5 #Numero de rodadas do AE - variabilidade do processador
+n_vbatch = 10 #Numero de rodadas do AE - variabilidade do processador
 n_passagens = 50  #Numero de passagens para cada ponto da curva ROC/cada conjunto
 n_passag = '50'
 
@@ -188,13 +258,13 @@ n_thresholds = 5000
 metrica = DI  # Media, Desvio, Mediana ou DI
 metric = 'DKL'
 
-verdadeiros_negativos = np.zeros((2, n_thresholds, n_vbatch))  # 5%, 10%, and 20%
-verdadeiros_positivos = np.zeros((2, n_thresholds, n_vbatch))
-falsos_negativos = np.zeros((2, n_thresholds, n_vbatch))
-falsos_positivos = np.zeros((2, n_thresholds, n_vbatch))
+verdadeiros_negativos = np.zeros((3, n_thresholds, n_vbatch))  # 5%, 10%, and 20%
+verdadeiros_positivos = np.zeros((3, n_thresholds, n_vbatch))
+falsos_negativos = np.zeros((3, n_thresholds, n_vbatch))
+falsos_positivos = np.zeros((3, n_thresholds, n_vbatch))
 
-tpr = np.zeros((2, n_thresholds, n_vbatch))
-fpr = np.zeros((2, n_thresholds, n_vbatch))
+tpr = np.zeros((3, n_thresholds, n_vbatch))
+fpr = np.zeros((3, n_thresholds, n_vbatch))
 
 # Plots
 
@@ -219,8 +289,8 @@ for nvar in range(n_vbatch):
             fpr[caso, idx, nvar] = falsos_positivos[caso, idx, nvar] / (
             falsos_positivos[caso, idx, nvar] + verdadeiros_negativos[caso, idx, nvar])
 
-tprMean = np.zeros((2, n_thresholds))
-fprMean = np.zeros((2, n_thresholds))
+tprMean = np.zeros((3, n_thresholds))
+fprMean = np.zeros((3, n_thresholds))
 
 fig, ax2 = plt.subplots()
 
